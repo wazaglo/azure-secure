@@ -30,6 +30,7 @@ param logAnalyticsWorkspaceId string
 param workspaceCustomerId string
 
 @description('Application Insights Connection String')
+@secure()
 param appInsightsConnectionString string
 
 @description('ACR Login Server hostname')
@@ -39,6 +40,7 @@ param acrLoginServer string
 param acrName string
 
 @description('Key Vault URI')
+@secure()
 param keyVaultUri string
 
 @description('Key Vault name (same resource group)')
