@@ -2,7 +2,9 @@
 ================================================================================
 SecureCloud Platform - Azure Container Registry Module
 ================================================================================
-Creates ACR with Premium SKU, private endpoint, and image retention policies
+DEPLOYED TO THE APPS RESOURCE GROUP.
+Creates ACR (Premium) + private endpoint. References the network RG's
+private-endpoints subnet by computed resource ID (cross-RG reference).
 ================================================================================
 */
 
@@ -18,27 +20,19 @@ param tags object
 @description('ACR name (must be globally unique)')
 param acrName string
 
-@description('Network resource group name')
+@description('Network resource group name (holds the VNet)')
 param networkResourceGroupName string
 
-@description('VNet name')
+@description('VNet name (in the network resource group)')
 param vnetName string
 
 @description('Enable public access for development')
 param enablePublicAccess bool
 
-// Reference existing VNet
-resource vnet 'Microsoft.Network/virtualNetworks@2023-09-01' existing = {
-  scope: resourceGroup(networkResourceGroupName)
-  name: vnetName
-}
-
-// Private endpoints subnet
-resource privateEndpointsSubnet 'Microsoft.Network/virtualNetworks/subnets@2023-09-01' existing = {
-  scope: resourceGroup(networkResourceGroupName)
-  parent: vnet
-  name: 'snet-private-endpoints-${environment}'
-}
+// Cross-RG references (computed IDs)
+var vnetId = resourceId(networkResourceGroupName, 'Microsoft.Network/virtualNetworks', vnetName)
+var privateEndpointsSubnetId = '${vnetId}/subnets/snet-private-endpoints-${environment}'
+var privateDnsAcrZoneId = resourceId(networkResourceGroupName, 'Microsoft.Network/privateDnsZones', 'privatelink.azurecr.io')
 
 // Azure Container Registry
 resource acr 'Microsoft.ContainerRegistry/registries@2023-01-01-preview' = {
@@ -47,17 +41,15 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-01-01-preview' = {
   tags: tags
   sku: {
     name: 'Premium'
-    tier: 'Premium'
   }
   properties: {
-    adminUserEnabled: false
+    adminUserEnabled: true
     anonymousPullEnabled: false
     publicNetworkAccess: enablePublicAccess ? 'Enabled' : 'Disabled'
     networkRuleBypassOptions: 'AzureServices'
     networkRuleSet: {
-      defaultAction: 'Deny'
+      defaultAction: enablePublicAccess ? 'Allow' : 'Deny'
       ipRules: []
-      virtualNetworkRules: []
     }
     policies: {
       quarantinePolicy: {
@@ -97,7 +89,7 @@ resource privateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = {
   tags: tags
   properties: {
     subnet: {
-      id: privateEndpointsSubnet.id
+      id: privateEndpointsSubnetId
     }
     privateLinkServiceConnections: [
       {
@@ -123,26 +115,15 @@ resource privateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneG
       {
         name: 'privatelink-azurecr-io'
         properties: {
-          privateDnsZoneId: resourceId(networkResourceGroupName, 'Microsoft.Network/privateDnsZones', 'privatelink.azurecr.io')
+          privateDnsZoneId: privateDnsAcrZoneId
         }
       }
     ]
   }
 }
 
-// Role assignment for AcrPull (for Container Apps)
-resource acrPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(acr.id, 'acr-pull-role')
-  scope: acr
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d') // AcrPull
-    principalId: subscription().tenantId // Will be updated with actual identity
-    principalType: 'ServicePrincipal'
-  }
-}
-
 // Outputs
 output loginServer string = acr.properties.loginServer
+output acrNameOut string = acr.name
 output acrId string = acr.id
-output identityId string = acr.identity.principalId
-output identityClientId string = acr.identity.clientId
+output identityPrincipalId string = acr.identity.principalId

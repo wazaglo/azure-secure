@@ -85,6 +85,7 @@ resource actionGroup 'Microsoft.Insights/actionGroups@2023-01-01' = {
 // Outputs
 output workspaceId string = workspace.id
 output workspaceName string = workspace.name
+output workspaceCustomerId string = workspace.properties.customerId
 output appInsightsId string = appInsights.id
 output appInsightsConnectionString string = appInsights.properties.ConnectionString
 output actionGroupId string = actionGroup.id

@@ -2,8 +2,16 @@
 ================================================================================
 SecureCloud Platform - Main Bicep Template
 ================================================================================
-Deploys complete infrastructure for the SecureCloud platform
-Supports dev, staging, and prod environments
+Deploys the app-tier infrastructure (Key Vault, ACR, PostgreSQL, Monitoring,
+Container Apps) to the APPS resource group.
+
+The NETWORKING layer (VNet, subnets, NSGs, private DNS) lives in a separate
+resource group and is deployed with modules/networking.bicep. This template
+references it by resource-group name + VNet name.
+
+Deploy order:
+  1. az deployment group create -g <network-RG> -f infrastructure/modules/networking.bicep ...
+  2. az deployment group create -g <apps-RG>    -f infrastructure/main.bicep ...
 ================================================================================
 */
 
@@ -22,71 +30,72 @@ param tags object = {
   Repository: 'github.com/wazaglo/azure-secure'
 }
 
-@description('Network resource group name (existing)')
-param networkResourceGroupName string = 'rg-securecloud-${environment}-networking'
+@description('Network resource group name (existing, holds the VNet)')
+param networkResourceGroupName string
 
-@description('VNet name (existing)')
-param vnetName string = 'vnet-securecloud-${environment}'
+@description('VNet name (existing, in the network resource group)')
+param vnetName string
 
-@description('Key Vault name (existing or new)')
-param keyVaultName string = 'kv-securecloud-${environment}'
+@description('Key Vault name')
+param keyVaultName string
 
-@description('ACR name (existing or new)')
-param acrName string = 'acrsecurecloud${uniqueString(resourceGroup().id)}'
+@description('ACR name (globally unique)')
+param acrName string
 
 @description('PostgreSQL server name')
-param postgresServerName string = 'pg-securecloud-${environment}'
+param postgresServerName string
 
 @description('PostgreSQL admin username')
-param postgresAdminLogin string = 'dbadmin'
+param postgresAdminLogin string
 
-@description('PostgreSQL admin password (use Key Vault in production)')
+@description('PostgreSQL admin password (use Key Vault reference in production)')
 @secure()
 param postgresAdminPassword string
 
 @description('Container Apps Environment name')
-param containerAppsEnvName string = 'cae-securecloud-${environment}'
+param containerAppsEnvName string
 
 @description('Container App name')
-param containerAppName string = 'app-securecloud-${environment}'
+param containerAppName string
 
 @description('Log Analytics Workspace name')
-param logAnalyticsWorkspaceName string = 'law-securecloud-${environment}'
+param logAnalyticsWorkspaceName string
 
 @description('Application Insights name')
-param appInsightsName string = 'ai-securecloud-${environment}'
+param appInsightsName string
 
-@description('Managed Identity name for app')
-param appIdentityName string = 'mi-securecloud-app-${environment}'
+@description('Managed Identity name for the application')
+param appIdentityName string
 
 @description('Managed Identity name for GitHub Actions')
-param githubIdentityName string = 'mi-github-${environment}'
+param githubIdentityName string
 
 @description('Enable public access for development')
 param enablePublicAccess bool = (environment == 'dev')
 
-@description('Container image to deploy')
-param containerImage string = ''
+@description('Container image to deploy (empty = use ACR :latest)')
+param containerImage string
 
-@description('Container registry server')
-param containerRegistryServer string = ''
+@description('Container CPU cores (decimal, passed via JSON params)')
+param containerCpu any
 
-@description('Container registry identity')
-param containerRegistryIdentity string = 'system'
-
-// Module references
-module networking 'modules/networking.bicep' = {
-  name: 'networking-${environment}'
+// ---------------------------------------------------------------------------
+// Monitoring
+// ---------------------------------------------------------------------------
+module monitoring 'modules/monitoring.bicep' = {
+  name: 'monitoring-${environment}'
   params: {
     environment: environment
     location: location
     tags: tags
-    networkResourceGroupName: networkResourceGroupName
-    vnetName: vnetName
-    enablePublicAccess: enablePublicAccess
+    workspaceName: logAnalyticsWorkspaceName
+    appInsightsName: appInsightsName
   }
 }
 
+// ---------------------------------------------------------------------------
+// Key Vault
+// ---------------------------------------------------------------------------
 module keyvault 'modules/keyvault.bicep' = {
   name: 'keyvault-${environment}'
   params: {
@@ -100,6 +109,9 @@ module keyvault 'modules/keyvault.bicep' = {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Azure Container Registry
+// ---------------------------------------------------------------------------
 module acr 'modules/acr.bicep' = {
   name: 'acr-${environment}'
   params: {
@@ -113,6 +125,9 @@ module acr 'modules/acr.bicep' = {
   }
 }
 
+// ---------------------------------------------------------------------------
+// PostgreSQL
+// ---------------------------------------------------------------------------
 module postgres 'modules/postgres.bicep' = {
   name: 'postgres-${environment}'
   params: {
@@ -128,17 +143,9 @@ module postgres 'modules/postgres.bicep' = {
   }
 }
 
-module monitoring 'modules/monitoring.bicep' = {
-  name: 'monitoring-${environment}'
-  params: {
-    environment: environment
-    location: location
-    tags: tags
-    workspaceName: logAnalyticsWorkspaceName
-    appInsightsName: appInsightsName
-  }
-}
-
+// ---------------------------------------------------------------------------
+// Container Apps + Managed Identities + RBAC
+// ---------------------------------------------------------------------------
 module containerapps 'modules/containerapps.bicep' = {
   name: 'containerapps-${environment}'
   params: {
@@ -148,20 +155,24 @@ module containerapps 'modules/containerapps.bicep' = {
     containerAppsEnvName: containerAppsEnvName
     containerAppName: containerAppName
     logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
+    workspaceCustomerId: monitoring.outputs.workspaceCustomerId
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
     acrLoginServer: acr.outputs.loginServer
-    acrIdentity: acr.outputs.identityId
+    acrName: acrName
     keyVaultUri: keyvault.outputs.vaultUri
-    keyVaultIdentity: keyvault.outputs.identityId
+    keyVaultName: keyVaultName
     postgresFqdn: postgres.outputs.fullyQualifiedDomainName
     appIdentityName: appIdentityName
     githubIdentityName: githubIdentityName
     containerImage: containerImage
+    containerCpu: containerCpu
     enablePublicAccess: enablePublicAccess
   }
 }
 
+// ---------------------------------------------------------------------------
 // Outputs
+// ---------------------------------------------------------------------------
 output acrLoginServer string = acr.outputs.loginServer
 output keyVaultUri string = keyvault.outputs.vaultUri
 output postgresFqdn string = postgres.outputs.fullyQualifiedDomainName

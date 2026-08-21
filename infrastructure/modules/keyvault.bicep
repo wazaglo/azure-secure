@@ -2,7 +2,9 @@
 ================================================================================
 SecureCloud Platform - Key Vault Module
 ================================================================================
-Creates Key Vault with RBAC, private endpoint, and secret rotation policies
+DEPLOYED TO THE APPS RESOURCE GROUP.
+Creates Key Vault + private endpoint. References the network RG's
+private-endpoints subnet by computed resource ID (cross-RG reference).
 ================================================================================
 */
 
@@ -18,27 +20,19 @@ param tags object
 @description('Key Vault name')
 param keyVaultName string
 
-@description('Network resource group name')
+@description('Network resource group name (holds the VNet)')
 param networkResourceGroupName string
 
-@description('VNet name')
+@description('VNet name (in the network resource group)')
 param vnetName string
 
 @description('Enable public access for development')
 param enablePublicAccess bool
 
-// Reference existing VNet
-resource vnet 'Microsoft.Network/virtualNetworks@2023-09-01' existing = {
-  scope: resourceGroup(networkResourceGroupName)
-  name: vnetName
-}
-
-// Private endpoints subnet
-resource privateEndpointsSubnet 'Microsoft.Network/virtualNetworks/subnets@2023-09-01' existing = {
-  scope: resourceGroup(networkResourceGroupName)
-  parent: vnet
-  name: 'snet-private-endpoints-${environment}'
-}
+// Cross-RG references (computed IDs)
+var vnetId = resourceId(networkResourceGroupName, 'Microsoft.Network/virtualNetworks', vnetName)
+var privateEndpointsSubnetId = '${vnetId}/subnets/snet-private-endpoints-${environment}'
+var privateDnsVaultZoneId = resourceId(networkResourceGroupName, 'Microsoft.Network/privateDnsZones', 'privatelink.vaultcore.azure.net')
 
 // Key Vault
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
@@ -48,7 +42,7 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   properties: {
     sku: {
       family: 'A'
-      name: environment == 'prod' ? 'Premium' : 'Standard'
+      name: environment == 'prod' ? 'premium' : 'standard'
     }
     tenantId: subscription().tenantId
     enableRbacAuthorization: true
@@ -72,7 +66,7 @@ resource privateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = {
   tags: tags
   properties: {
     subnet: {
-      id: privateEndpointsSubnet.id
+      id: privateEndpointsSubnetId
     }
     privateLinkServiceConnections: [
       {
@@ -82,7 +76,7 @@ resource privateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = {
           groupIds: [
             'vault'
           ]
-          requestMessage: 'Auto-approved for SecureCloud'
+          requestMessage: 'Auto-approved for SecureCloud Key Vault'
         }
       }
     ]
@@ -98,26 +92,26 @@ resource privateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneG
       {
         name: 'privatelink-vaultcore-azure-net'
         properties: {
-          privateDnsZoneId: resourceId(networkResourceGroupName, 'Microsoft.Network/privateDnsZones', 'privatelink.vaultcore.azure.net')
+          privateDnsZoneId: privateDnsVaultZoneId
         }
       }
     ]
   }
 }
 
-// Managed Identity for Key Vault access
+// Managed Identity for Key Vault operations
 resource keyVaultIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: 'mi-kv-${environment}'
   location: location
   tags: tags
 }
 
-// Role assignment for Key Vault identity
+// Role assignment: Key Vault Officer for the identity
 resource keyVaultIdentityRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(keyVault.id, keyVaultIdentity.id, '00482a5a-887f-4fb3-b363-3b7fe8e74483')
   scope: keyVault
   properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '00482a5a-887f-4fb3-b363-3b7fe8e74483') // Key Vault Administrator
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '00482a5a-887f-4fb3-b363-3b7fe8e74483')
     principalId: keyVaultIdentity.properties.principalId
     principalType: 'ServicePrincipal'
   }
@@ -126,5 +120,6 @@ resource keyVaultIdentityRole 'Microsoft.Authorization/roleAssignments@2022-04-0
 // Outputs
 output vaultUri string = keyVault.properties.vaultUri
 output keyVaultId string = keyVault.id
+output keyVaultNameOut string = keyVault.name
 output identityId string = keyVaultIdentity.id
 output identityClientId string = keyVaultIdentity.properties.clientId

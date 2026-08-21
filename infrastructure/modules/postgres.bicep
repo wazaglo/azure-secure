@@ -2,7 +2,9 @@
 ================================================================================
 SecureCloud Platform - PostgreSQL Flexible Server Module
 ================================================================================
-Creates PostgreSQL with private endpoint, HA, and backup configuration
+DEPLOYED TO THE APPS RESOURCE GROUP.
+Creates PostgreSQL Flexible Server + private endpoint. References the network
+RG's data subnet (delegated) and private DNS zone by computed resource ID.
 ================================================================================
 */
 
@@ -25,34 +27,20 @@ param adminLogin string
 @secure()
 param adminPassword string
 
-@description('Network resource group name')
+@description('Network resource group name (holds the VNet)')
 param networkResourceGroupName string
 
-@description('VNet name')
+@description('VNet name (in the network resource group)')
 param vnetName string
 
 @description('Enable public access for development')
 param enablePublicAccess bool
 
-// Reference existing VNet
-resource vnet 'Microsoft.Network/virtualNetworks@2023-09-01' existing = {
-  scope: resourceGroup(networkResourceGroupName)
-  name: vnetName
-}
-
-// Data subnet
-resource dataSubnet 'Microsoft.Network/virtualNetworks/subnets@2023-09-01' existing = {
-  scope: resourceGroup(networkResourceGroupName)
-  parent: vnet
-  name: 'snet-data-${environment}'
-}
-
-// Private endpoints subnet
-resource privateEndpointsSubnet 'Microsoft.Network/virtualNetworks/subnets@2023-09-01' existing = {
-  scope: resourceGroup(networkResourceGroupName)
-  parent: vnet
-  name: 'snet-private-endpoints-${environment}'
-}
+// Cross-RG references (computed IDs)
+var vnetId = resourceId(networkResourceGroupName, 'Microsoft.Network/virtualNetworks', vnetName)
+var dataSubnetId = '${vnetId}/subnets/snet-data-${environment}'
+var privateEndpointsSubnetId = '${vnetId}/subnets/snet-private-endpoints-${environment}'
+var privateDnsPostgresZoneId = resourceId(networkResourceGroupName, 'Microsoft.Network/privateDnsZones', 'privatelink.postgres.database.azure.com')
 
 // PostgreSQL Flexible Server
 resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01' = {
@@ -60,7 +48,7 @@ resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01' = {
   location: location
   tags: tags
   sku: {
-    name: environment == 'prod' ? 'Standard_D4s_v3' : 'Standard_B1ms'
+    name: environment == 'prod' ? 'Standard_D4ds_v5' : 'Standard_B1ms'
     tier: environment == 'prod' ? 'GeneralPurpose' : 'Burstable'
   }
   properties: {
@@ -70,16 +58,14 @@ resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01' = {
     storage: {
       storageSizeGB: environment == 'prod' ? 128 : 32
       autoGrow: 'Enabled'
-      iops: environment == 'prod' ? 3000 : 0
     }
     network: {
-      delegatedSubnetResourceId: dataSubnet.id
-      privateDnsZoneArmResourceId: resourceId(networkResourceGroupName, 'Microsoft.Network/privateDnsZones', 'privatelink.postgres.database.azure.com')
+      delegatedSubnetResourceId: dataSubnetId
+      privateDnsZoneArmResourceId: privateDnsPostgresZoneId
       publicNetworkAccess: enablePublicAccess ? 'Enabled' : 'Disabled'
     }
     highAvailability: {
       mode: environment == 'prod' ? 'ZoneRedundant' : 'Disabled'
-      standbyAvailabilityZone: environment == 'prod' ? '2' : ''
     }
     backup: {
       backupRetentionDays: environment == 'prod' ? 35 : 7
@@ -88,11 +74,7 @@ resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01' = {
     }
     maintenanceWindow: {
       customWindow: 'Disabled'
-      dayOfWeek: 0
-      startHour: 2
-      startMinute: 0
     }
-    createMode: 'Default'
   }
 }
 
@@ -103,7 +85,7 @@ resource privateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = {
   tags: tags
   properties: {
     subnet: {
-      id: privateEndpointsSubnet.id
+      id: privateEndpointsSubnetId
     }
     privateLinkServiceConnections: [
       {
@@ -129,24 +111,14 @@ resource privateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneG
       {
         name: 'privatelink-postgres-database-azure-com'
         properties: {
-          privateDnsZoneId: resourceId(networkResourceGroupName, 'Microsoft.Network/privateDnsZones', 'privatelink.postgres.database.azure.com')
+          privateDnsZoneId: privateDnsPostgresZoneId
         }
       }
     ]
   }
 }
 
-// Database firewall rule (for Azure services)
-resource firewallRule 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-12-01' = {
-  parent: postgres
-  name: 'AllowAzureServices'
-  properties: {
-    startIpAddress: '0.0.0.0'
-    endIpAddress: '0.0.0.0'
-  }
-}
-
 // Outputs
-output fullyQualifiedDomainName string = postgres.properties.fullyQualifiedDomainName
+output fullyQualifiedDomainName string = postgres.properties.fqdn
 output serverId string = postgres.id
 output administratorLogin string = postgres.properties.administratorLogin

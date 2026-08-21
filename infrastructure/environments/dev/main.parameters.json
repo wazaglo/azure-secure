@@ -24,15 +24,10 @@
       "value": "pg-securecloud-dev"
     },
     "postgresAdminLogin": {
-      "value": "dbadmin"
+      "value": "db_admin"
     },
     "postgresAdminPassword": {
-      "reference": {
-        "keyVault": {
-          "id": "/subscriptions/da8acf79-902c-472f-b631-500e9a2c2c86/resourceGroups/rg-securecloud-dev-networking-centralus/providers/Microsoft.KeyVault/vaults/kv-securecloud-dev-cus"
-        },
-        "secretName": "db-password"
-      }
+      "value": ""
     },
     "containerAppsEnvName": {
       "value": "cae-securecloud-dev"
@@ -58,11 +53,8 @@
     "containerImage": {
       "value": ""
     },
-    "containerRegistryServer": {
-      "value": "secureclouddevcentralus.azurecr.io"
-    },
-    "containerRegistryIdentity": {
-      "value": "system"
+    "containerCpu": {
+      "value": 0.5
     }
   }
 }
