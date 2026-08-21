@@ -1,0 +1,68 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environment": {
+      "value": "dev"
+    },
+    "location": {
+      "value": "centralus"
+    },
+    "networkResourceGroupName": {
+      "value": "rg-securecloud-dev-networking-centralus"
+    },
+    "vnetName": {
+      "value": "rg-securecloud-dev-networking-centralus"
+    },
+    "keyVaultName": {
+      "value": "kv-securecloud-dev-cus"
+    },
+    "acrName": {
+      "value": "secureclouddevcentralus"
+    },
+    "postgresServerName": {
+      "value": "pg-securecloud-dev"
+    },
+    "postgresAdminLogin": {
+      "value": "dbadmin"
+    },
+    "postgresAdminPassword": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/da8acf79-902c-472f-b631-500e9a2c2c86/resourceGroups/rg-securecloud-dev-networking-centralus/providers/Microsoft.KeyVault/vaults/kv-securecloud-dev-cus"
+        },
+        "secretName": "db-password"
+      }
+    },
+    "containerAppsEnvName": {
+      "value": "cae-securecloud-dev"
+    },
+    "containerAppName": {
+      "value": "app-securecloud-dev"
+    },
+    "logAnalyticsWorkspaceName": {
+      "value": "law-securecloud-dev"
+    },
+    "appInsightsName": {
+      "value": "ai-securecloud-dev"
+    },
+    "appIdentityName": {
+      "value": "mi-securecloud-app-dev"
+    },
+    "githubIdentityName": {
+      "value": "mi-github-dev"
+    },
+    "enablePublicAccess": {
+      "value": true
+    },
+    "containerImage": {
+      "value": ""
+    },
+    "containerRegistryServer": {
+      "value": "secureclouddevcentralus.azurecr.io"
+    },
+    "containerRegistryIdentity": {
+      "value": "system"
+    }
+  }
+}

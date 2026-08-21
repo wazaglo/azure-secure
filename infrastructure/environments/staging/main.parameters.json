@@ -1,0 +1,68 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environment": {
+      "value": "staging"
+    },
+    "location": {
+      "value": "centralus"
+    },
+    "networkResourceGroupName": {
+      "value": "rg-securecloud-staging-networking"
+    },
+    "vnetName": {
+      "value": "vnet-securecloud-staging"
+    },
+    "keyVaultName": {
+      "value": "kv-securecloud-staging"
+    },
+    "acrName": {
+      "value": "acrsecurecloudstaging"
+    },
+    "postgresServerName": {
+      "value": "pg-securecloud-staging"
+    },
+    "postgresAdminLogin": {
+      "value": "dbadmin"
+    },
+    "postgresAdminPassword": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/da8acf79-902c-472f-b631-500e9a2c2c86/resourceGroups/rg-securecloud-staging-networking/providers/Microsoft.KeyVault/vaults/kv-securecloud-staging"
+        },
+        "secretName": "db-password"
+      }
+    },
+    "containerAppsEnvName": {
+      "value": "cae-securecloud-staging"
+    },
+    "containerAppName": {
+      "value": "app-securecloud-staging"
+    },
+    "logAnalyticsWorkspaceName": {
+      "value": "law-securecloud-staging"
+    },
+    "appInsightsName": {
+      "value": "ai-securecloud-staging"
+    },
+    "appIdentityName": {
+      "value": "mi-securecloud-app-staging"
+    },
+    "githubIdentityName": {
+      "value": "mi-github-staging"
+    },
+    "enablePublicAccess": {
+      "value": false
+    },
+    "containerImage": {
+      "value": ""
+    },
+    "containerRegistryServer": {
+      "value": ""
+    },
+    "containerRegistryIdentity": {
+      "value": "system"
+    }
+  }
+}

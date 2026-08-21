@@ -1,0 +1,16 @@
+__pycache__
+*.pyc
+.venv
+venv
+.pytest_cache
+.mypy_cache
+.coverage
+*.egg-info
+Dockerfile
+.dockerignore
+.env
+*.log
+tests
+bandit-report.json
+trivy-*.sarif
+coverage.xml

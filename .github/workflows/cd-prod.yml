@@ -1,0 +1,264 @@
+name: CD - Deploy to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Docker image tag to deploy (from staging)'
+        required: true
+        type: string
+      confirm_production:
+        description: 'Type "DEPLOY TO PRODUCTION" to confirm'
+        required: true
+        type: string
+
+env:
+  ENVIRONMENT: prod
+  RESOURCE_GROUP: rg-securecloud-prod-apps
+  CONTAINER_APP_NAME: app-securecloud-prod
+  REGISTRY: ${{ secrets.ACR_LOGIN_SERVER }}
+  IMAGE_NAME: securecloud-app
+
+jobs:
+  # Job 1: Validate Production Deployment
+  validate:
+    name: Validate Production Deployment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm_production }}" != "DEPLOY TO PRODUCTION" ]; then
+            echo "❌ Invalid confirmation. Must type exactly: DEPLOY TO PRODUCTION"
+            exit 1
+          fi
+          echo "✅ Production deployment confirmed"
+
+      - name: Verify image exists in ACR
+        run: |
+          az acr repository show \
+            --name ${{ secrets.ACR_NAME }} \
+            --repository ${{ env.IMAGE_NAME }} \
+            --tag ${{ github.event.inputs.image_tag }} \
+            --output table
+
+  # Job 2: Deploy Infrastructure
+  deploy-infrastructure:
+    name: Deploy Infrastructure (Bicep)
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy Bicep
+        uses: azure/arm-deploy@v1
+        with:
+          resourceGroupName: ${{ env.RESOURCE_GROUP }}
+          template: ./infrastructure/main.bicep
+          parameters: ./infrastructure/environments/prod/main.parameters.json
+          failOnStdErr: false
+          deploymentName: 'deploy-${{ github.sha }}'
+
+      - name: Get deployment outputs
+        id: outputs
+        run: |
+          OUTPUTS=$(az deployment group show \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name 'deploy-${{ github.sha }}' \
+            --query properties.outputs -o json)
+          echo "outputs=$OUTPUTS" >> $GITHUB_OUTPUT
+
+      - name: Set outputs as environment variables
+        run: |
+          echo "ACR_LOGIN_SERVER=$(echo '${{ steps.outputs.outputs }}' | jq -r '.acrLoginServer.value')" >> $GITHUB_ENV
+          echo "CONTAINER_APP_FQDN=$(echo '${{ steps.outputs.outputs }}' | jq -r '.containerAppFqdn.value')" >> $GITHUB_ENV
+          echo "APP_IDENTITY_CLIENT_ID=$(echo '${{ steps.outputs.outputs }}' | jq -r '.appIdentityClientId.value')" >> $GITHUB_ENV
+          echo "APP_INSIGHTS_CONNECTION_STRING=$(echo '${{ steps.outputs.outputs }}' | jq -r '.appInsightsConnectionString.value')" >> $GITHUB_ENV
+
+  # Job 3: Deploy to Container Apps (Blue-Green)
+  deploy-app:
+    name: Deploy to Container Apps (Blue-Green)
+    needs: deploy-infrastructure
+    runs-on: ubuntu-latest
+    environment:
+      name: Production
+      url: https://app.securecloud.example.com
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get current active revision
+        id: current
+        run: |
+          CURRENT=$(az containerapp revision list \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --query "[?properties.active==true].name" \
+            --output tsv)
+          echo "current_revision=$CURRENT" >> $GITHUB_OUTPUT
+
+      - name: Deploy new revision (inactive)
+        run: |
+          az containerapp update \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.image_tag }} \
+            --set-env-vars \
+              AZURE_CLIENT_ID=${{ env.APP_IDENTITY_CLIENT_ID }} \
+              APPLICATIONINSIGHTS_CONNECTION_STRING=${{ env.APP_INSIGHTS_CONNECTION_STRING }} \
+              KEY_VAULT_URI=$(az keyvault show --name kv-securecloud-prod --resource-group rg-securecloud-prod-networking --query properties.vaultUri -o tsv) \
+            --revision-suffix ${{ github.sha }} \
+            --ingress external=true
+
+      - name: Wait for new revision to be ready
+        run: |
+          echo "Waiting for new revision to be ready..."
+          sleep 60
+
+      - name: Test new revision
+        run: |
+          FQDN=$(az containerapp show \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv)
+
+          echo "Testing new revision at https://${FQDN}"
+
+          for i in {1..15}; do
+            if curl -f -s "https://${FQDN}/health" > /dev/null; then
+              echo "✅ New revision health check passed"
+              exit 0
+            fi
+            echo "Attempt $i/15 failed, retrying in 10s..."
+            sleep 10
+          done
+
+          echo "❌ New revision health check failed"
+          exit 1
+
+      - name: Run production smoke tests
+        run: |
+          FQDN=$(az containerapp show \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv)
+
+          echo "Running production smoke tests against https://${FQDN}"
+
+          # Health check
+          curl -f "https://${FQDN}/health" | jq .
+
+          # API docs
+          curl -f "https://${FQDN}/api" | jq .
+
+          # Database test
+          curl -f "https://${FQDN}/db-test" | jq .
+
+          # Metrics with API key
+          API_KEY=$(az keyvault secret show --vault-name kv-securecloud-prod --name api-key --query value -o tsv)
+          curl -f -H "X-API-Key: ${API_KEY}" "https://${FQDN}/api/metrics" | jq .
+
+      - name: Promote new revision (100% traffic)
+        run: |
+          az containerapp ingress traffic set \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --revision-weight ${{ github.sha }}=100
+
+      - name: Verify traffic switch
+        run: |
+          FQDN=$(az containerapp show \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv)
+
+          echo "Verifying traffic switched to new revision..."
+          sleep 10
+          curl -f "https://${FQDN}/health" | jq .
+
+      - name: Notify deployment status
+        if: always()
+        run: |
+          STATUS="${{ job.status }}"
+          FQDN=$(az containerapp show \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv 2>/dev/null || echo "unknown")
+
+          echo "## Production Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: Production" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ${STATUS}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image**: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.image_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **FQDN**: https://${FQDN}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Actor**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Previous Revision**: ${{ steps.current.outputs.current_revision }}" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${STATUS}" = "success" ]; then
+            echo "✅ Production deployment successful!"
+          else
+            echo "❌ Production deployment failed!"
+            echo "🔄 Rolling back to previous revision..."
+            az containerapp ingress traffic set \
+              --name ${{ env.CONTAINER_APP_NAME }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --revision-weight ${{ steps.current.outputs.current_revision }}=100
+            exit 1
+          fi
+
+  # Job 4: Post-deployment verification
+  post-deploy:
+    name: Post-Deployment Verification
+    needs: deploy-app
+    runs-on: ubuntu-latest
+    if: success()
+    steps:
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Verify monitoring alerts
+        run: |
+          echo "Checking monitoring alerts..."
+          az monitor metrics alert list \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --output table
+
+      - name: Create deployment record
+        run: |
+          az deployment group create \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --template-file ./infrastructure/main.bicep \
+            --parameters ./infrastructure/environments/prod/main.parameters.json \
+            --name "deployment-record-${{ github.sha }}" \
+            --mode Incremental

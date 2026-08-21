@@ -1,0 +1,290 @@
+name: CI - Build & Test
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'app/**'
+      - 'tests/**'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'app/**'
+      - 'tests/**'
+      - '.github/workflows/ci.yml'
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: '3.11'
+  REGISTRY: ${{ secrets.ACR_LOGIN_SERVER }}
+  IMAGE_NAME: securecloud-app
+
+jobs:
+  # Job 1: Code Quality & Linting
+  lint:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          cd app
+          pip install -r requirements.txt
+          pip install flake8 black isort mypy
+
+      - name: Run Black (format check)
+        run: |
+          cd app
+          black --check --diff .
+
+      - name: Run isort (import sort check)
+        run: |
+          cd app
+          isort --check --diff .
+
+      - name: Run flake8 (lint)
+        run: |
+          cd app
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+
+      - name: Run mypy (type check)
+        run: |
+          cd app
+          mypy . --ignore-missing-imports
+
+  # Job 2: Unit Tests
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          cd app
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-mock
+
+      - name: Run unit tests
+        run: |
+          cd app
+          python -m pytest ../tests/unit/ -v --cov=. --cov-report=xml --cov-report=term-missing
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./app/coverage.xml
+          flags: unittests
+          name: unit-tests
+
+  # Job 3: Security Scan (SAST)
+  security-scan:
+    name: Security Scan (SAST)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Bandit (Python security)
+        run: |
+          cd app
+          pip install bandit
+          bandit -r . -f json -o bandit-report.json || true
+        continue-on-error: true
+
+      - name: Upload Bandit results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: ./app/bandit-report.json
+          category: bandit
+
+      - name: Run Trivy (filesystem scan)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-fs.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy
+
+  # Job 4: Dependency Scan
+  dependency-scan:
+    name: Dependency Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          cd app
+          pip install -r requirements.txt
+          pip install safety pip-audit
+
+      - name: Run Safety check
+        run: |
+          cd app
+          safety check --json --output safety-report.json || true
+        continue-on-error: true
+
+      - name: Run pip-audit
+        run: |
+          cd app
+          pip-audit --format=json --output=pip-audit-report.json || true
+        continue-on-error: true
+
+      - name: Upload dependency scan results
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-scan-reports
+          path: |
+            app/safety-report.json
+            app/pip-audit-report.json
+
+  # Job 5: Build Docker Image
+  build:
+    name: Build Docker Image
+    needs: [lint, test, security-scan, dependency-scan]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Azure Container Registry
+        uses: azure/docker-login@v1
+        with:
+          login-server: ${{ env.REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ./app
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          load: false
+
+      - name: Scan container image (Trivy)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.meta.outputs.tags }}
+          format: 'sarif'
+          output: 'trivy-image.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy image scan results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
+
+  # Job 6: CodeQL Analysis
+  codeql:
+    name: CodeQL Analysis
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ['python']
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: +security-and-quality
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
+
+  # Job 7: Summary
+  summary:
+    name: CI Summary
+    needs: [lint, test, security-scan, dependency-scan, build, codeql]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check job statuses
+        run: |
+          echo "Lint: ${{ needs.lint.result }}"
+          echo "Test: ${{ needs.test.result }}"
+          echo "Security Scan: ${{ needs.security-scan.result }}"
+          echo "Dependency Scan: ${{ needs.dependency-scan.result }}"
+          echo "Build: ${{ needs.build.result }}"
+          echo "CodeQL: ${{ needs.codeql.result }}"
+
+      - name: Fail if any required job failed
+        if: |
+          needs.lint.result == 'failure' ||
+          needs.test.result == 'failure' ||
+          needs.build.result == 'failure'
+        run: exit 1
+
+      - name: CI Passed
+        run: echo "✅ All CI checks passed!"
