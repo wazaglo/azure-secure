@@ -218,9 +218,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          load: false
+          cache-from: type=local
+          cache-to: type=local
 
       - name: Scan container image (Trivy)
         uses: aquasecurity/trivy-action@master
