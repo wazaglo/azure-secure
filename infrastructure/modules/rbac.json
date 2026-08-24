@@ -1,0 +1,101 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.46.1.21595",
+      "templateHash": "2678954441094398466"
+    }
+  },
+  "parameters": {
+    "keyVaultName": {
+      "type": "string",
+      "metadata": {
+        "description": "Key Vault name (this resource group)"
+      }
+    },
+    "acrName": {
+      "type": "string",
+      "metadata": {
+        "description": "ACR name (this resource group)"
+      }
+    },
+    "appIdentityName": {
+      "type": "string",
+      "metadata": {
+        "description": "App managed identity name (used only to build a stable role assignment name)"
+      }
+    },
+    "githubIdentityName": {
+      "type": "string",
+      "metadata": {
+        "description": "GitHub Actions managed identity name (used only to build a stable role assignment name)"
+      }
+    },
+    "appIdentityPrincipalId": {
+      "type": "string",
+      "metadata": {
+        "description": "App managed identity principal ID"
+      }
+    },
+    "githubIdentityPrincipalId": {
+      "type": "string",
+      "metadata": {
+        "description": "GitHub Actions managed identity principal ID"
+      }
+    }
+  },
+  "variables": {
+    "keyVaultSecretsUser": "4633458b-17de-408a-b874-0445c86b69e6",
+    "acrPull": "7f951dda-4ed3-4680-a7ca-43fe172d538d",
+    "acrPush": "8311e382-0749-4cb8-b61a-304f252e45ec",
+    "keyVaultOfficer": "00482a5a-887f-4fb3-b363-3b7fe8e74483"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]",
+      "name": "[guid(resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName')), parameters('appIdentityName'), 'kv-secrets-user')]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('keyVaultSecretsUser'))]",
+        "principalId": "[parameters('appIdentityPrincipalId')]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName'))]",
+      "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName')), parameters('appIdentityName'), 'acr-pull')]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('acrPull'))]",
+        "principalId": "[parameters('appIdentityPrincipalId')]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName'))]",
+      "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName')), parameters('githubIdentityName'), 'acr-push')]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('acrPush'))]",
+        "principalId": "[parameters('githubIdentityPrincipalId')]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]",
+      "name": "[guid(resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName')), parameters('githubIdentityName'), 'kv-officer')]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('keyVaultOfficer'))]",
+        "principalId": "[parameters('githubIdentityPrincipalId')]",
+        "principalType": "ServicePrincipal"
+      }
+    }
+  ]
+}

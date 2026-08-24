@@ -2,7 +2,7 @@ name: CD - Deploy to Development
 
 on:
   push:
-    branches: [develop]
+    branches: [main]
   workflow_dispatch:
     inputs:
       image_tag:
@@ -15,6 +15,7 @@ on:
         type: boolean
         default: false
 
+defaults: { run: { shell: '/bin/bash' } }
 env:
   ENVIRONMENT: dev
   RESOURCE_GROUP: rg-securecloud-dev-apps
@@ -42,13 +43,12 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Deploy Bicep
-        uses: azure/arm-deploy@v1
-        with:
-          resourceGroupName: ${{ env.RESOURCE_GROUP }}
-          template: ./infrastructure/main.bicep
-          parameters: ./infrastructure/environments/dev/main.parameters.json
-          failOnStdErr: false
-          deploymentName: 'deploy-${{ github.sha }}'
+        run: |
+          az deployment group create \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --template-file ./infrastructure/main.bicep \
+            --parameters @infrastructure/environments/dev/main.parameters.json \
+            --name 'deploy-${{ github.sha }}'
 
       - name: Get deployment outputs
         id: outputs
@@ -61,11 +61,18 @@ jobs:
 
       - name: Set outputs as environment variables
         run: |
-          echo "ACR_LOGIN_SERVER=$(echo '${{ steps.outputs.outputs }}' | jq -r '.acrLoginServer.value')" >> $GITHUB_ENV
-          echo "CONTAINER_APP_FQDN=$(echo '${{ steps.outputs.outputs }}' | jq -r '.containerAppFqdn.value')" >> $GITHUB_ENV
-          echo "APP_IDENTITY_CLIENT_ID=$(echo '${{ steps.outputs.outputs }}' | jq -r '.appIdentityClientId.value')" >> $GITHUB_ENV
-          echo "GITHUB_IDENTITY_CLIENT_ID=$(echo '${{ steps.outputs.outputs }}' | jq -r '.githubIdentityClientId.value')" >> $GITHUB_ENV
-          echo "APP_INSIGHTS_CONNECTION_STRING=$(echo '${{ steps.outputs.outputs }}' | jq -r '.appInsightsConnectionString.value')" >> $GITHUB_ENV
+          ACR_LOGIN_SERVER=$(jq -r '.acrLoginServer.value' <<< ${{ steps.outputs.outputs }})
+          CONTAINER_APP_FQDN=$(jq -r '.containerAppFqdn.value' <<< ${{ steps.outputs.outputs }})
+          APP_IDENTITY_CLIENT_ID=$(jq -r '.appIdentityClientId.value' <<< ${{ steps.outputs.outputs }})
+          GITHUB_IDENTITY_CLIENT_ID=$(jq -r '.githubIdentityClientId.value' <<< ${{ steps.outputs.outputs }})
+          APP_INSIGHTS_CONNECTION_STRING=$(jq -r '.appInsightsConnectionString.value' <<< ${{ steps.outputs.outputs }})
+          KEY_VAULT_URI=$(jq -r '.keyVaultUri.value' <<< ${{ steps.outputs.outputs }})
+          echo "ACR_LOGIN_SERVER=${ACR_LOGIN_SERVER}" >> $GITHUB_ENV
+          echo "CONTAINER_APP_FQDN=${CONTAINER_APP_FQDN}" >> $GITHUB_ENV
+          echo "APP_IDENTITY_CLIENT_ID=${APP_IDENTITY_CLIENT_ID}" >> $GITHUB_ENV
+          echo "GITHUB_IDENTITY_CLIENT_ID=${GITHUB_IDENTITY_CLIENT_ID}" >> $GITHUB_ENV
+          echo "APP_INSIGHTS_CONNECTION_STRING=${APP_INSIGHTS_CONNECTION_STRING}" >> $GITHUB_ENV
+          echo "KEY_VAULT_URI=${KEY_VAULT_URI}" >> $GITHUB_ENV
 
   # Job 2: Build & Push Container Image
   build-image:
@@ -120,8 +127,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=local
+          cache-to: type=local
 
       - name: Scan container image
         uses: aquasecurity/trivy-action@master
@@ -166,7 +173,7 @@ jobs:
             --set-env-vars \
               AZURE_CLIENT_ID=${{ env.APP_IDENTITY_CLIENT_ID }} \
               APPLICATIONINSIGHTS_CONNECTION_STRING=${{ env.APP_INSIGHTS_CONNECTION_STRING }} \
-              KEY_VAULT_URI=$(az keyvault show --name kv-securecloud-dev-cus --resource-group rg-securecloud-dev-networking-centralus --query properties.vaultUri -o tsv)
+              KEY_VAULT_URI=${{ env.KEY_VAULT_URI }}
 
       - name: Wait for deployment
         run: |
@@ -183,7 +190,6 @@ jobs:
 
           echo "Testing deployment at https://${FQDN}"
 
-          # Test health endpoint
           for i in {1..10}; do
             if curl -f -s "https://${FQDN}/health" > /dev/null; then
               echo "✅ Health check passed"

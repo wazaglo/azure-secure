@@ -2,7 +2,9 @@
 ================================================================================
 SecureCloud Platform - Container Apps Module
 ================================================================================
-Creates Container Apps Environment, Container App, and Managed Identities
+DEPLOYED TO THE APPS RESOURCE GROUP.
+Creates Container Apps Environment + Container App + Managed Identities + RBAC.
+References KV/ACR (same RG) by name and the Log Analytics workspace by ID.
 ================================================================================
 */
 
@@ -21,26 +23,22 @@ param containerAppsEnvName string
 @description('Container App name')
 param containerAppName string
 
-@description('Log Analytics Workspace ID')
+@description('Log Analytics Workspace resource ID')
 param logAnalyticsWorkspaceId string
 
+@description('Log Analytics Workspace customer ID')
+param workspaceCustomerId string
+
 @description('Application Insights Connection String')
+@secure()
 param appInsightsConnectionString string
 
-@description('ACR Login Server')
+@description('ACR Login Server hostname')
 param acrLoginServer string
 
-@description('ACR Identity ID')
-param acrIdentity string
-
 @description('Key Vault URI')
+@secure()
 param keyVaultUri string
-
-@description('Key Vault Identity ID')
-param keyVaultIdentity string
-
-@description('PostgreSQL FQDN')
-param postgresFqdn string
 
 @description('App Managed Identity name')
 param appIdentityName string
@@ -54,10 +52,17 @@ param containerImage string
 @description('Enable public access for development')
 param enablePublicAccess bool
 
-// Log Analytics Workspace reference
-resource workspace 'Microsoft.OperationalInsights/workspaces@2022-10-01' existing = {
-  id: logAnalyticsWorkspaceId
-}
+@description('Container CPU cores (decimal, passed via JSON params)')
+param containerCpu any
+
+// Container sizing per environment
+var isProd = environment == 'prod'
+var containerMemory = isProd ? '2Gi' : '1Gi'
+var minReplicas = isProd ? 2 : 1
+var maxReplicas = isProd ? 10 : 3
+
+// Cross-RG references are passed in as resource IDs (KV/ACR live in the
+// network resource group). RBAC role assignments are scoped to those IDs.
 
 // Container Apps Environment
 resource containerAppsEnv 'Microsoft.App/managedEnvironments@2023-05-01' = {
@@ -65,18 +70,13 @@ resource containerAppsEnv 'Microsoft.App/managedEnvironments@2023-05-01' = {
   location: location
   tags: tags
   properties: {
-    vnetConfiguration: {
-      infrastructureSubnetId: '' // Will be set via subnet reference
-      internal: true
-    }
     appLogsConfiguration: {
       destination: 'log-analytics'
       logAnalyticsConfiguration: {
-        customerId: workspace.properties.customerId
-        sharedKey: listKeys(workspace.id, workspace.apiVersion).primarySharedKey
+        customerId: workspaceCustomerId
+        sharedKey: listKeys(logAnalyticsWorkspaceId, '2022-10-01').primarySharedKey
       }
     }
-    daprAIConnectionString: appInsightsConnectionString
     zoneRedundant: environment == 'prod'
   }
 }
@@ -95,63 +95,22 @@ resource githubIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-0
   tags: tags
 }
 
-// Role assignments for App Identity
-resource appIdentityKeyVaultRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(appIdentity.id, 'keyvault-secrets-user')
-  scope: resourceId('Microsoft.KeyVault/vaults', keyVaultUri.split('/')[8])
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6') // Key Vault Secrets User
-    principalId: appIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-resource appIdentityAcrPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(appIdentity.id, 'acr-pull')
-  scope: resourceId('Microsoft.ContainerRegistry/registries', acrLoginServer.split('.')[0])
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d') // AcrPull
-    principalId: appIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-// Role assignments for GitHub Identity
-resource githubIdentityContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(githubIdentity.id, 'contributor-rg')
-  scope: resourceGroup()
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b24988ac-6180-42a0-ab88-20f7382dd24c') // Contributor
-    principalId: githubIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-resource githubIdentityAcrPushRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(githubIdentity.id, 'acr-push')
-  scope: resourceId('Microsoft.ContainerRegistry/registries', acrLoginServer.split('.')[0])
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8311e382-0749-4cb8-b61a-304f252e45ec') // AcrPush
-    principalId: githubIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
-resource githubIdentityKeyVaultOfficerRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(githubIdentity.id, 'keyvault-officer')
-  scope: resourceId('Microsoft.KeyVault/vaults', keyVaultUri.split('/')[8])
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '00482a5a-887f-4fb3-b363-3b7fe8e74483') // Key Vault Secrets Officer
-    principalId: githubIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
+// ---------------------------------------------------------------------------
+// RBAC role assignments are defined in main.bicep (they are scoped to the
+// Key Vault / ACR that live in the network resource group).
+// ---------------------------------------------------------------------------
 
 // Container App
 resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
   name: containerAppName
   location: location
   tags: tags
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${appIdentity.id}': {}
+    }
+  }
   properties: {
     managedEnvironmentId: containerAppsEnv.id
     configuration: {
@@ -160,10 +119,6 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
         targetPort: 5000
         transport: 'http'
         allowInsecure: false
-        trafficWeight: 100
-        stickySessions: {
-          affinity: 'none'
-        }
       }
       secrets: [
         {
@@ -178,7 +133,7 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
       registries: [
         {
           server: acrLoginServer
-          identity: acrIdentity
+          identity: appIdentity.id
         }
       ]
       activeRevisionsMode: environment == 'prod' ? 'multiple' : 'single'
@@ -189,8 +144,8 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
           name: 'securecloud-app'
           image: containerImage != '' ? containerImage : '${acrLoginServer}/securecloud-app:latest'
           resources: {
-            cpu: environment == 'prod' ? 1.0 : 0.5
-            memory: environment == 'prod' ? '2Gi' : '1Gi'
+            cpu: containerCpu
+            memory: containerMemory
           }
           env: [
             {
@@ -247,8 +202,8 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
         }
       ]
       scale: {
-        minReplicas: environment == 'prod' ? 2 : 1
-        maxReplicas: environment == 'prod' ? 10 : 3
+        minReplicas: minReplicas
+        maxReplicas: maxReplicas
         rules: [
           {
             name: 'http-scaling'
@@ -260,12 +215,6 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
           }
         ]
       }
-    }
-  }
-  identity: {
-    type: 'UserAssigned'
-    userAssignedIdentities: {
-      '${appIdentity.id}': {}
     }
   }
 }

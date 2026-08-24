@@ -24,15 +24,10 @@
       "value": "pg-securecloud-prod"
     },
     "postgresAdminLogin": {
-      "value": "dbadmin"
+      "value": "db_admin"
     },
     "postgresAdminPassword": {
-      "reference": {
-        "keyVault": {
-          "id": "/subscriptions/da8acf79-902c-472f-b631-500e9a2c2c86/resourceGroups/rg-securecloud-prod-networking/providers/Microsoft.KeyVault/vaults/kv-securecloud-prod"
-        },
-        "secretName": "db-password"
-      }
+      "value": "CHANGE_ME_VIA_KEYVAULT_REFERENCE"
     },
     "containerAppsEnvName": {
       "value": "cae-securecloud-prod"
@@ -58,11 +53,8 @@
     "containerImage": {
       "value": ""
     },
-    "containerRegistryServer": {
-      "value": ""
-    },
-    "containerRegistryIdentity": {
-      "value": "system"
+    "containerCpu": {
+      "value": 1
     }
   }
 }

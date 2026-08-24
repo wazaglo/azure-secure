@@ -1,6 +1,7 @@
 """
 SecureCloud Platform - Unit Tests
 """
+import datetime
 import os
 import sys
 import json
@@ -75,13 +76,13 @@ class TestDatabaseManager:
         """Test connection pool initialization"""
         mock_pool.return_value = MagicMock()
         manager = DatabaseManager()
-        manager.settings.get_db_config = MagicMock(return_value={
+        with patch('app.database.DatabaseManager._get_connection_params', return_value={
             "host": "localhost",
             "name": "testdb",
             "username": "testuser",
             "password": "testpass"
-        })
-        manager.initialize(min_conn=1, max_conn=5)
+        }):
+            manager.initialize(min_conn=1, max_conn=5)
         assert manager._pool is not None
         mock_pool.assert_called_once()
 
@@ -158,7 +159,7 @@ class TestFlaskApp:
             "password": "testpass"
         }
 
-        response = client.get('/health')
+        response = client.get('/health/')
         assert response.status_code == 200
         data = json.loads(response.data)
         assert data['status'] == 'healthy'
@@ -170,7 +171,7 @@ class TestFlaskApp:
         """Test health endpoint when unhealthy"""
         mock_health.return_value = False
 
-        response = client.get('/health')
+        response = client.get('/health/')
         assert response.status_code == 503
         data = json.loads(response.data)
         assert data['status'] == 'unhealthy'
@@ -178,7 +179,7 @@ class TestFlaskApp:
 
     def test_liveness_endpoint(self, client):
         """Test liveness probe"""
-        response = client.get('/health/live')
+        response = client.get('/health/liveness')
         assert response.status_code == 200
         data = json.loads(response.data)
         assert data['status'] == 'alive'
@@ -205,9 +206,9 @@ class TestFlaskApp:
         assert response.status_code == 200
         data = json.loads(response.data)
         assert 'endpoints' in data
-        assert len(data['endpoints']) == 6
+        assert len(data['endpoints']) == 7
 
-    @patch('app.config.Config.get_api_key')
+    @patch('app.config.Settings.get_api_key')
     def test_metrics_endpoint_valid_key(self, mock_api_key, client):
         """Test metrics endpoint with valid API key"""
         mock_api_key.return_value = "test-api-key"
@@ -243,7 +244,7 @@ class TestFlaskApp:
         mock_cur = MagicMock()
         mock_cur.fetchone.return_value = {
             'postgres_version': 'PostgreSQL 16.0',
-            'server_time': '2024-01-01 12:00:00',
+            'server_time': datetime.datetime(2024, 1, 1, 12, 0, 0),
             'database_name': 'secureclouddb',
             'connected_user': 'dbadmin',
             'server_ip': '10.0.4.4',
@@ -251,7 +252,7 @@ class TestFlaskApp:
         }
         mock_cursor.return_value.__enter__.return_value = mock_cur
 
-        response = client.get('/db-test')
+        response = client.get('/api/db-test')
         assert response.status_code == 200
         data = json.loads(response.data)
         assert data['message'] == 'Database connected successfully'

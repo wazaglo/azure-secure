@@ -1,9 +1,19 @@
 /*
 ================================================================================
-SecureCloud Platform - Main Bicep Template
+SecureCloud Platform - Main Bicep Template (SINGLE ENVIRONMENT)
 ================================================================================
-Deploys complete infrastructure for the SecureCloud platform
-Supports dev, staging, and prod environments
+Deploys the app-tier infrastructure (Monitoring, Container Apps Environment,
+Container App, Managed Identities, RBAC) into the APPS resource group.
+
+The NETWORKING layer (VNet, subnets, private DNS) and the shared platform
+services (Key Vault, ACR, PostgreSQL) already live in a separate resource
+group (`rg-securecloud-dev-networking-centralus`) and are referenced here as
+EXISTING resources (cross-RG) — they are NOT re-created, which avoids
+globally-unique name conflicts.
+
+Deploy:
+  az deployment group create -g <apps-RG> -f infrastructure/main.bicep \
+    -p @infrastructure/environments/dev/main.parameters.json
 ================================================================================
 */
 
@@ -22,112 +32,74 @@ param tags object = {
   Repository: 'github.com/wazaglo/azure-secure'
 }
 
-@description('Network resource group name (existing)')
-param networkResourceGroupName string = 'rg-securecloud-${environment}-networking'
+@description('Network resource group name (existing, holds the VNet + shared services)')
+param networkResourceGroupName string
 
-@description('VNet name (existing)')
-param vnetName string = 'vnet-securecloud-${environment}'
+@description('VNet name (existing, in the network resource group)')
+param vnetName string
 
-@description('Key Vault name (existing or new)')
-param keyVaultName string = 'kv-securecloud-${environment}'
+@description('Key Vault name (existing, in the network resource group)')
+param keyVaultName string
 
-@description('ACR name (existing or new)')
-param acrName string = 'acrsecurecloud${uniqueString(resourceGroup().id)}'
+@description('ACR name (existing, in the network resource group)')
+param acrName string
 
-@description('PostgreSQL server name')
-param postgresServerName string = 'pg-securecloud-${environment}'
-
-@description('PostgreSQL admin username')
-param postgresAdminLogin string = 'dbadmin'
-
-@description('PostgreSQL admin password (use Key Vault in production)')
-@secure()
-param postgresAdminPassword string
+@description('PostgreSQL server name (existing, in the network resource group)')
+param postgresServerName string
 
 @description('Container Apps Environment name')
-param containerAppsEnvName string = 'cae-securecloud-${environment}'
+param containerAppsEnvName string
 
 @description('Container App name')
-param containerAppName string = 'app-securecloud-${environment}'
+param containerAppName string
 
 @description('Log Analytics Workspace name')
-param logAnalyticsWorkspaceName string = 'law-securecloud-${environment}'
+param logAnalyticsWorkspaceName string
 
 @description('Application Insights name')
-param appInsightsName string = 'ai-securecloud-${environment}'
+param appInsightsName string
 
-@description('Managed Identity name for app')
-param appIdentityName string = 'mi-securecloud-app-${environment}'
+@description('Managed Identity name for the application')
+param appIdentityName string
 
 @description('Managed Identity name for GitHub Actions')
-param githubIdentityName string = 'mi-github-${environment}'
+param githubIdentityName string
 
 @description('Enable public access for development')
 param enablePublicAccess bool = (environment == 'dev')
 
-@description('Container image to deploy')
-param containerImage string = ''
+@description('Container image to deploy (empty = use ACR :latest)')
+param containerImage string
 
-@description('Container registry server')
-param containerRegistryServer string = ''
+@description('Container CPU cores (decimal, passed via JSON params)')
+param containerCpu any
 
-@description('Container registry identity')
-param containerRegistryIdentity string = 'system'
+// Resource IDs for the existing shared services (network resource group)
+var keyVaultId = resourceId(networkResourceGroupName, 'Microsoft.KeyVault/vaults', keyVaultName)
+var acrId = resourceId(networkResourceGroupName, 'Microsoft.ContainerRegistry/registries', acrName)
+var postgresId = resourceId(networkResourceGroupName, 'Microsoft.DBforPostgreSQL/flexibleServers', postgresServerName)
 
-// Module references
-module networking 'modules/networking.bicep' = {
-  name: 'networking-${environment}'
-  params: {
-    environment: environment
-    location: location
-    tags: tags
-    networkResourceGroupName: networkResourceGroupName
-    vnetName: vnetName
-    enablePublicAccess: enablePublicAccess
-  }
+// ---------------------------------------------------------------------------
+// Existing shared platform resources (networking resource group)
+// ---------------------------------------------------------------------------
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
+  name: keyVaultName
+  scope: resourceGroup(networkResourceGroupName)
 }
 
-module keyvault 'modules/keyvault.bicep' = {
-  name: 'keyvault-${environment}'
-  params: {
-    environment: environment
-    location: location
-    tags: tags
-    keyVaultName: keyVaultName
-    networkResourceGroupName: networkResourceGroupName
-    vnetName: vnetName
-    enablePublicAccess: enablePublicAccess
-  }
+resource acr 'Microsoft.ContainerRegistry/registries@2023-01-01-preview' existing = {
+  name: acrName
+  scope: resourceGroup(networkResourceGroupName)
 }
 
-module acr 'modules/acr.bicep' = {
-  name: 'acr-${environment}'
-  params: {
-    environment: environment
-    location: location
-    tags: tags
-    acrName: acrName
-    networkResourceGroupName: networkResourceGroupName
-    vnetName: vnetName
-    enablePublicAccess: enablePublicAccess
-  }
+resource postgres 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01' existing = {
+  name: postgresServerName
+  scope: resourceGroup(networkResourceGroupName)
 }
 
-module postgres 'modules/postgres.bicep' = {
-  name: 'postgres-${environment}'
-  params: {
-    environment: environment
-    location: location
-    tags: tags
-    serverName: postgresServerName
-    adminLogin: postgresAdminLogin
-    adminPassword: postgresAdminPassword
-    networkResourceGroupName: networkResourceGroupName
-    vnetName: vnetName
-    enablePublicAccess: enablePublicAccess
-  }
-}
-
+// ---------------------------------------------------------------------------
+// Monitoring
+// ---------------------------------------------------------------------------
 module monitoring 'modules/monitoring.bicep' = {
   name: 'monitoring-${environment}'
   params: {
@@ -139,6 +111,9 @@ module monitoring 'modules/monitoring.bicep' = {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Container Apps + Managed Identities
+// ---------------------------------------------------------------------------
 module containerapps 'modules/containerapps.bicep' = {
   name: 'containerapps-${environment}'
   params: {
@@ -148,23 +123,52 @@ module containerapps 'modules/containerapps.bicep' = {
     containerAppsEnvName: containerAppsEnvName
     containerAppName: containerAppName
     logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
+    workspaceCustomerId: monitoring.outputs.workspaceCustomerId
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
-    acrLoginServer: acr.outputs.loginServer
-    acrIdentity: acr.outputs.identityId
-    keyVaultUri: keyvault.outputs.vaultUri
-    keyVaultIdentity: keyvault.outputs.identityId
-    postgresFqdn: postgres.outputs.fullyQualifiedDomainName
+    acrLoginServer: acr.properties.loginServer
+    keyVaultUri: keyVault.properties.vaultUri
     appIdentityName: appIdentityName
     githubIdentityName: githubIdentityName
     containerImage: containerImage
+    containerCpu: containerCpu
     enablePublicAccess: enablePublicAccess
   }
 }
 
+// ---------------------------------------------------------------------------
+// RBAC scoped to the EXISTING Key Vault / ACR (network resource group).
+// This must run in a module deployed at the network RG scope.
+// ---------------------------------------------------------------------------
+module rbac 'modules/rbac.bicep' = {
+  name: 'rbac-${environment}'
+  scope: resourceGroup(networkResourceGroupName)
+  params: {
+    keyVaultName: keyVaultName
+    acrName: acrName
+    appIdentityName: appIdentityName
+    githubIdentityName: githubIdentityName
+    appIdentityPrincipalId: containerapps.outputs.appIdentityPrincipalId
+    githubIdentityPrincipalId: containerapps.outputs.githubIdentityPrincipalId
+  }
+}
+
+// GitHub Actions identity: Contributor on the apps resource group
+resource githubIdentityContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(resourceGroup().id, githubIdentityName, 'contributor-rg')
+  scope: resourceGroup()
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b24988ac-6180-42a0-ab88-20f7382dd24c')
+    principalId: containerapps.outputs.githubIdentityPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Outputs
-output acrLoginServer string = acr.outputs.loginServer
-output keyVaultUri string = keyvault.outputs.vaultUri
-output postgresFqdn string = postgres.outputs.fullyQualifiedDomainName
+// ---------------------------------------------------------------------------
+output acrLoginServer string = acr.properties.loginServer
+output keyVaultUri string = keyVault.properties.vaultUri
+output postgresFqdn string = postgres.properties.fullyQualifiedDomainName
 output containerAppFqdn string = containerapps.outputs.containerAppFqdn
 output appIdentityClientId string = containerapps.outputs.appIdentityClientId
 output githubIdentityClientId string = containerapps.outputs.githubIdentityClientId

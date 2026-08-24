@@ -1,0 +1,286 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.46.1.21595",
+      "templateHash": "3929621907437670595"
+    }
+  },
+  "parameters": {
+    "environment": {
+      "type": "string",
+      "metadata": {
+        "description": "Environment name"
+      }
+    },
+    "location": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure region"
+      }
+    },
+    "tags": {
+      "type": "object",
+      "metadata": {
+        "description": "Resource tags"
+      }
+    },
+    "containerAppsEnvName": {
+      "type": "string",
+      "metadata": {
+        "description": "Container Apps Environment name"
+      }
+    },
+    "containerAppName": {
+      "type": "string",
+      "metadata": {
+        "description": "Container App name"
+      }
+    },
+    "logAnalyticsWorkspaceId": {
+      "type": "string",
+      "metadata": {
+        "description": "Log Analytics Workspace resource ID"
+      }
+    },
+    "workspaceCustomerId": {
+      "type": "string",
+      "metadata": {
+        "description": "Log Analytics Workspace customer ID"
+      }
+    },
+    "appInsightsConnectionString": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Application Insights Connection String"
+      }
+    },
+    "acrLoginServer": {
+      "type": "string",
+      "metadata": {
+        "description": "ACR Login Server hostname"
+      }
+    },
+    "keyVaultUri": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Key Vault URI"
+      }
+    },
+    "appIdentityName": {
+      "type": "string",
+      "metadata": {
+        "description": "App Managed Identity name"
+      }
+    },
+    "githubIdentityName": {
+      "type": "string",
+      "metadata": {
+        "description": "GitHub Actions Managed Identity name"
+      }
+    },
+    "containerImage": {
+      "type": "string",
+      "metadata": {
+        "description": "Container image to deploy"
+      }
+    },
+    "enablePublicAccess": {
+      "type": "bool",
+      "metadata": {
+        "description": "Enable public access for development"
+      }
+    },
+    "containerCpu": {
+      "metadata": {
+        "description": "Container CPU cores (decimal, passed via JSON params)"
+      }
+    }
+  },
+  "variables": {
+    "isProd": "[equals(parameters('environment'), 'prod')]",
+    "containerMemory": "[if(variables('isProd'), '2Gi', '1Gi')]",
+    "minReplicas": "[if(variables('isProd'), 2, 1)]",
+    "maxReplicas": "[if(variables('isProd'), 10, 3)]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.App/managedEnvironments",
+      "apiVersion": "2023-05-01",
+      "name": "[parameters('containerAppsEnvName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "appLogsConfiguration": {
+          "destination": "log-analytics",
+          "logAnalyticsConfiguration": {
+            "customerId": "[parameters('workspaceCustomerId')]",
+            "sharedKey": "[listKeys(parameters('logAnalyticsWorkspaceId'), '2022-10-01').primarySharedKey]"
+          }
+        },
+        "zoneRedundant": "[equals(parameters('environment'), 'prod')]"
+      }
+    },
+    {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2023-01-31",
+      "name": "[parameters('appIdentityName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]"
+    },
+    {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2023-01-31",
+      "name": "[parameters('githubIdentityName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]"
+    },
+    {
+      "type": "Microsoft.App/containerApps",
+      "apiVersion": "2023-05-01",
+      "name": "[parameters('containerAppName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "identity": {
+        "type": "UserAssigned",
+        "userAssignedIdentities": {
+          "[format('{0}', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('appIdentityName')))]": {}
+        }
+      },
+      "properties": {
+        "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvName'))]",
+        "configuration": {
+          "ingress": {
+            "external": "[parameters('enablePublicAccess')]",
+            "targetPort": 5000,
+            "transport": "http",
+            "allowInsecure": false
+          },
+          "secrets": [
+            {
+              "name": "key-vault-uri",
+              "value": "[parameters('keyVaultUri')]"
+            },
+            {
+              "name": "app-insights-connection-string",
+              "value": "[parameters('appInsightsConnectionString')]"
+            }
+          ],
+          "registries": [
+            {
+              "server": "[parameters('acrLoginServer')]",
+              "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('appIdentityName'))]"
+            }
+          ],
+          "activeRevisionsMode": "[if(equals(parameters('environment'), 'prod'), 'multiple', 'single')]"
+        },
+        "template": {
+          "containers": [
+            {
+              "name": "securecloud-app",
+              "image": "[if(not(equals(parameters('containerImage'), '')), parameters('containerImage'), format('{0}/securecloud-app:latest', parameters('acrLoginServer')))]",
+              "resources": {
+                "cpu": "[parameters('containerCpu')]",
+                "memory": "[variables('containerMemory')]"
+              },
+              "env": [
+                {
+                  "name": "KEY_VAULT_URI",
+                  "secretRef": "key-vault-uri"
+                },
+                {
+                  "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
+                  "secretRef": "app-insights-connection-string"
+                },
+                {
+                  "name": "ENVIRONMENT",
+                  "value": "[parameters('environment')]"
+                },
+                {
+                  "name": "AZURE_CLIENT_ID",
+                  "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('appIdentityName')), '2023-01-31').clientId]"
+                },
+                {
+                  "name": "PYTHONUNBUFFERED",
+                  "value": "1"
+                },
+                {
+                  "name": "PYTHONDONTWRITEBYTECODE",
+                  "value": "1"
+                }
+              ],
+              "probes": [
+                {
+                  "type": "Liveness",
+                  "httpGet": {
+                    "path": "/health/live",
+                    "port": 5000,
+                    "scheme": "HTTP"
+                  },
+                  "initialDelaySeconds": 10,
+                  "periodSeconds": 30,
+                  "timeoutSeconds": 5,
+                  "failureThreshold": 3
+                },
+                {
+                  "type": "Readiness",
+                  "httpGet": {
+                    "path": "/health/ready",
+                    "port": 5000,
+                    "scheme": "HTTP"
+                  },
+                  "initialDelaySeconds": 5,
+                  "periodSeconds": 10,
+                  "timeoutSeconds": 3,
+                  "failureThreshold": 3
+                }
+              ]
+            }
+          ],
+          "scale": {
+            "minReplicas": "[variables('minReplicas')]",
+            "maxReplicas": "[variables('maxReplicas')]",
+            "rules": [
+              {
+                "name": "http-scaling",
+                "http": {
+                  "metadata": {
+                    "concurrentRequests": "50"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('appIdentityName'))]",
+        "[resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "containerAppFqdn": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.App/containerApps', parameters('containerAppName')), '2023-05-01').configuration.ingress.fqdn]"
+    },
+    "appIdentityClientId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('appIdentityName')), '2023-01-31').clientId]"
+    },
+    "appIdentityPrincipalId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('appIdentityName')), '2023-01-31').principalId]"
+    },
+    "githubIdentityClientId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('githubIdentityName')), '2023-01-31').clientId]"
+    },
+    "githubIdentityPrincipalId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('githubIdentityName')), '2023-01-31').principalId]"
+    }
+  }
+}

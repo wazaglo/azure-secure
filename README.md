@@ -1,54 +1,51 @@
 # SecureCloud Platform
 
-A **production-grade Azure DevOps platform** demonstrating a complete, secure, automated deployment pipeline from GitHub to Azure — with zero secrets in your repo and zero public endpoints.
+A secure, automated deployment pipeline from GitHub Actions to Azure using GitHub OIDC, Bicep, and Azure Container Apps.
+
+**Current state: Single branch (`main`) · Single environment (`dev`)**
 
 ---
 
 ## Architecture
 
 ```
-                         INTERNET
-                            |
-                            v
-                    [Azure Front Door]
-                    (Global entry, SSL, WAF)
-                            |
-                            v
-          ┌─────────────────┴─────────────────┐
-          │                                   |
-    [Private VNet - 10.0.0.0/16]             |
-          |                                   |
-    +-----+------------+--------------+       |
-    |                  |              |       |
-    v                  v              v       |
-[Compute Tier]    [Data Tier]   [Private Endpoints]
-  ACA (3 zones)   PostgreSQL    Key Vault, ACR
-  Auto-scaling    Private IP    No public access
-  Managed ID      HA enabled    Managed Identity
-    |                  |              |
-    +------------------+--------------+
-           |
-           v
-    [Monitoring & Logging]
-    Azure Monitor + Log Analytics + App Insights
-           |
-           v
-    [CI/CD Pipeline]
-    GitHub Actions + Bicep + OIDC
+                          INTERNET
+                             |
+                             v
+                   [GitHub Actions]
+                             |
+                             v
+                   (OIDC federated auth)
+                             |
+                             v
+                  +----------------------+
+                  |  Azure Subscription  |
+                  |  Subscription: da8acf79-902c-472f-b631-500e9a2c2c86 |
+                  +----------------------+
+                             |
+         +-----------------+-----------------+
+         |                 |                 |
+         v                 v                 v
++------------+  +------------+  +------------+
+| rg-securecloud-dev-networking-centralus  |  (VNet, private DNS, shared services)
+|  - Key Vault kv-securecloud-dev-cus      |
+|  - ACR secureclouddevcentralus           |
+|  - PostgreSQL pg-securecloud-dev         |
++------------+  +------------+  +------------+
+         |                 |                 |
+         v                 v                 v
++------------+  +------------+  +------------+
+| rg-securecloud-dev-apps                  |
+|  - Container Apps Environment            |
+|  - Container App app-securecloud-dev    |
+|  - Log Analytics law-securecloud-dev    |
+|  - App Insights ai-securecloud-dev      |
+|  - Managed Identities mi-securecloud-app-dev, mi-github-dev |
++------------+  +------------+  +------------+
+         |
+         v
+   [Docker Registry: secureclouddevcentralus.azurecr.io]
 ```
-
-### Component Overview
-
-| Layer | Service | Details |
-|-------|---------|---------|
-| **Compute** | Azure Container Apps | Serverless containers, 0.5–1.0 CPU, autoscaling on 50 concurrent requests |
-| **Registry** | Azure Container Registry (Premium) | Private endpoint, zone redundancy (prod), Notary trust, 7–30 day retention |
-| **Database** | PostgreSQL 16 Flexible Server | Private VNet only, zone-redundant HA (prod), 35-day geo-redundant backups |
-| **Secrets** | Azure Key Vault | RBAC-enabled, soft delete 90d, purge protection (prod), private endpoint |
-| **Identity** | Entra ID + Managed Identities | OIDC federation for CI/CD, MSI for app — no long-lived secrets |
-| **CI/CD** | GitHub Actions | OIDC auth, blue-green prod deploys, full quality gates |
-| **Monitoring** | App Insights + Log Analytics | Structured logs, telemetry, alerting to email + Slack |
-| **Networking** | VNet + NSG + Private DNS | 4-tier subnets, default-deny NSGs, private endpoints for all PaaS |
 
 ---
 
@@ -56,43 +53,30 @@ A **production-grade Azure DevOps platform** demonstrating a complete, secure, a
 
 ```
 azure-secure/
-├── app/                          # Flask application
-│   ├── main.py                   # Entry point
-│   ├── __init__.py               # App factory
-│   ├── config.py                 # Settings + Key Vault client
-│   ├── database.py               # Connection pool manager
-│   ├── extensions.py             # Logging + Prometheus metrics
-│   ├── monitoring.py             # App Insights + request telemetry
-│   ├── routes.py                 # API endpoints
+├── app/                                   # Flask application
+│   ├── config.py                          # Settings + Key Vault client
+│   ├── routes.py                          # API endpoints (+/health, /api, /db-test)
+│   ├── main.py                            # Entry point
+│   ├── __init__.py                        # App factory
+│   ├── database.py                        # Connection pool manager
+│   ├── extensions.py                      # Logging + Prometheus metrics
+│   ├── monitoring.py                      # App Insights + request telemetry
 │   ├── requirements.txt
-│   └── Dockerfile                # Multi-stage, non-root, health checks
+│   └── Dockerfile                         # Multi-stage, non-root, health checks
 ├── infrastructure/
-│   ├── main.bicep                # Root template (composes all modules)
+│   ├── main.bicep                         # Root template — references existing KV/ACR/PG from networking RG as existing resources
 │   ├── modules/
-│   │   ├── networking.bicep      # VNet, subnets, NSGs, private DNS
-│   │   ├── keyvault.bicep        # Key Vault + private endpoint
-│   │   ├── acr.bicep             # ACR Premium + private endpoint
-│   │   ├── postgres.bicep        # PostgreSQL Flexible + private endpoint
-│   │   ├── containerapps.bicep   # ACA + managed identities + RBAC
-│   │   └── monitoring.bicep      # Log Analytics + App Insights + alerts
+│   │   ├── acr.bicep                      # ACR Premium + private endpoint
+│   │   ├── containerapps.bicep            # ACA + managed identities + RBAC
+│   │   ├── keyvault.bicep                 # Key Vault + private endpoint
+│   │   └── rbac.bicep                     # Cross-RG role assignments (KV/ACR scoped)
 │   └── environments/
-│       ├── dev/main.parameters.json
-│       ├── staging/main.parameters.json
-│       └── prod/main.parameters.json
+│       └── dev/main.parameters.json       # Dev params — uses existing shared resource names
 ├── .github/workflows/
-│   ├── ci.yml                    # Lint, tests, SAST, dep scan, build, CodeQL
-│   ├── cd-dev.yml                # Deploy to dev (on push to develop)
-│   ├── cd-staging.yml            # Deploy to staging (on push to main)
-│   └── cd-prod.yml               # Blue-green prod deploy (manual, confirmed)
+│   └── cd.yml                             # Single CD workflow — triggers on main push + workflow_dispatch
+│       # Jobs: deploy-infrastructure → build-image → deploy-app → verify
 ├── tests/
-│   ├── unit/test_app.py          # Unit tests (pytest)
-│   └── integration/test_integration.py  # Live environment tests
-├── docs/
-│   ├── architecture.md
-│   ├── networking.md
-│   ├── security.md
-│   ├── ci-cd.md
-│   └── disaster-recovery.md
+│   └── unit/test_app.py                   # 20 unit tests passing
 ├── README.md
 ├── LICENSE
 └── .gitignore
@@ -100,33 +84,29 @@ azure-secure/
 
 ---
 
-## Application API
+## CI/CD Pipeline
 
-| Endpoint | Auth | Description |
-|----------|------|-------------|
-| `GET /` | — | Version + environment info |
-| `GET /health` | — | Comprehensive health (Key Vault + DB) |
-| `GET /health/live` | — | Liveness probe |
-| `GET /health/ready` | — | Readiness probe |
-| `GET /api` | — | API documentation |
-| `GET /api/metrics` | `X-API-Key` | Application + DB metrics |
-| `GET /db-test` | — | Database connectivity test |
-| `GET /metrics/prometheus` | — | Prometheus metrics |
+**Trigger:** `main` push or **Workflow Dispatch**
 
-The app fetches `db-host`, `db-name`, `db-username`, `db-password`, and `api-key` from Azure Key Vault at runtime via **Managed Identity** — no credentials in environment variables.
+**Jobs:**
+1. **Deploy Infrastructure** — Bicep deployment to `rg-securecloud-dev-apps` (references existing KV/ACR/PG from the networking resource group)
+2. **Build & Push Docker Image** — builds `securecloud-app` and pushes to `secureclouddevcentralus.azurecr.io/securecloud-app:latest`
+3. **Deploy to Container Apps** — updates the container app with new image + sets env vars (`AZURE_CLIENT_ID`, `APPLICATIONINSIGHTS_CONNECTION_STRING`, `KEY_VAULT_URI`)
+4. **Verify Deployment** — curls `https://<FQDN>/health` up to 10 attempts; exits 0 on first success
+5. **Smoke Tests** — tests `/health`, `/api`, `/db-test` against the deployed FQDN
+
+**No separate CI workflow** — the `cd.yml` job sequence replaces the previous separate `ci.yml` + `cd-*.yml` pattern.
 
 ---
 
 ## Security Model
 
-- **Zero secrets in repo or GitHub** — OIDC federation authenticates the pipeline
-- **No public endpoints** — Key Vault, ACR, and PostgreSQL are private-only (staging/prod)
-- **Least privilege RBAC** — app identity gets only `Key Vault Secrets User` + `AcrPull`; pipeline gets `Contributor` + `AcrPush` + `Key Vault Secrets Officer`
-- **Defense in depth** — NSG default-deny, private link service policies, delegated subnets, TLS everywhere
-- **Multi-layer scanning** — Bandit + CodeQL (code), safety + pip-audit (deps), Trivy (fs + image)
-- **Safe deploys** — health-gated traffic cutover; prod uses blue-green with automatic rollback
-
-See [docs/security.md](docs/security.md) for the full threat model and RBAC matrix.
+- **Zero secrets in repo** — GitHub OIDC federated credentials authenticate the pipeline to Azure
+- **No long-lived secrets** — all pipeline auth via federated identity tokens
+- **Least-privilege RBAC** — app identity gets `Key Vault Secrets User` + `AcrPull`; pipeline identity gets `Contributor` + `AcrPush` + `Key Vault Secrets Officer` (scoped via `rbac.bicep` module deployed at networking RG)
+- **Private-only PaaS** — Key Vault, ACR, and PostgreSQL have no public access; connectivity via VNet + private endpoints
+- **Defense in depth** — default-deny NSGs, delegated subnets, private link service policies, TLS everywhere
+- **Secret sources** — `db-host`, `db-name`, `db-username`, `db-password`, `api-key` fetched from Key Vault `kv-securecloud-dev-cus` at runtime via Managed Identity
 
 ---
 
@@ -134,44 +114,32 @@ See [docs/security.md](docs/security.md) for the full threat model and RBAC matr
 
 ### Prerequisites
 
-- GitHub account with the repo installed (`gh` CLI authenticated)
-- Azure subscription with Bicep deployed
-- Entra ID app registration with federated credentials for:
-  - branch `main`
-  - branch `develop`
-  - pull requests
+- GitHub account with the repo installed (`gh` CLI authenticated, OIDC federated credentials for `main` branch)
+- Azure subscription with the resource groups created:
+  - `rg-securecloud-dev-networking-centralus` (VNet, KV, ACR, PostgreSQL)
+  - `rg-securecloud-dev-apps` (Container Apps, LA, AI)
 
-### Deploy Dev
+### Trigger the Pipeline
 
-Push to `develop`:
-
+**Push to main:**
 ```bash
-git checkout -b develop
-git push -u origin develop
+git commit -am "deploy" && git push origin main
 ```
 
-### Deploy Staging
+**Or via Workflow Dispatch:**
+- Go to the Actions tab and click "Run workflow"
+- Optionally provide an `image_tag`
 
-Merge `develop` → `main` via pull request.
-
-### Deploy Production
-
-Manual trigger only, with confirmation:
+### Local Dev (no Azure deploy)
 
 ```bash
-gh workflow run cd-prod.yml \
-  -f image_tag=staging-abc1234-1712345678 \
-  -f confirm_production="DEPLOY TO PRODUCTION"
-```
-
-### Manual Bicep Deployment
-
-```bash
-az group create -n rg-securecloud-dev-apps -l centralus
-az deployment group create \
-  -g rg-securecloud-dev-apps \
-  -f infrastructure/main.bicep \
-  -p @infrastructure/environments/dev/main.parameters.json
+cd app
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+export ENVIRONMENT=development
+export DB_HOST=localhost DB_NAME=secureclouddb DB_USERNAME=db_admin DB_PASSWORD=local
+export API_KEY=test-api-key-12345
+python main.py
 ```
 
 ---
@@ -190,38 +158,16 @@ export API_KEY=test-api-key-12345
 python main.py
 ```
 
-### Docker
+---
 
-```bash
-docker build -t securecloud-app:dev -f app/Dockerfile .
-docker run --rm -p 5000:5000 \
-  -e ENVIRONMENT=development \
-  -e DB_HOST=host.docker.internal \
-  securecloud-app:dev
-```
-
-### Tests
+## Tests
 
 ```bash
 # Unit tests
 cd app && python -m pytest ../tests/unit/ -v --cov=. --cov-report=term-missing
 
-# Integration tests (against deployed env)
-export APP_URL=https://<fqdn>
-python -m pytest ../tests/integration/ -v
+# 20 unit tests passing
 ```
-
----
-
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Architecture](docs/architecture.md) | Design principles, component responsibilities, environment parity |
-| [Networking](docs/networking.md) | VNet topology, address plan, NSG rules, private endpoints |
-| [Security](docs/security.md) | Identity model, OIDC, RBAC matrix, threat model |
-| [CI/CD](docs/ci-cd.md) | Pipeline design, quality gates, rollback strategy |
-| [Disaster Recovery](docs/disaster-recovery.md) | RPO/RTO, failure scenarios, restore procedures |
 
 ---
 

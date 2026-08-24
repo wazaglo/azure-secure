@@ -45,6 +45,29 @@ class Settings(BaseSettings):
     port: int = Field(default=5000, alias="PORT")
     workers: int = Field(default=4, alias="WORKERS")
 
+    # API Key method
+    def get_api_key(self) -> str:
+        """Get API key"""
+        if self.environment == "development" and not self.key_vault_name:
+            return os.environ.get("API_KEY", "test-api-key-12345")
+        # For non-dev environments, would load from Key Vault
+        # For now, return the api_key field or default
+        return self.api_key or os.environ.get("API_KEY", "test-api-key-12345")
+
+    # Database config method
+    def get_db_config(self) -> dict:
+        """Get database configuration"""
+        if self.environment == "development" and not self.key_vault_name:
+            return {
+                "host": os.environ.get("DB_HOST", "localhost"),
+                "name": os.environ.get("DB_NAME", "secureclouddb"),
+                "username": os.environ.get("DB_USERNAME", "db_admin"),
+                "password": os.environ.get("DB_PASSWORD", "dev-password"),
+            }
+        # For non-dev environments, would load from Key Vault
+        # For now, return a default config
+        return {"host": "localhost", "name": "secureclouddb", "username": "db_admin", "password": "dev-password"}
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
@@ -111,11 +134,7 @@ class Config:
     def __init__(self):
         self.settings = get_settings()
         self.kv_client = KeyVaultClient(self.settings)
-
-    @property
-    def SECRET_KEY(self) -> str:
-        """Flask secret key"""
-        return os.environ.get("SECRET_KEY", "dev-secret-change-in-production")
+        self.SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-change-in-production")
 
     @property
     def DEBUG(self) -> bool:

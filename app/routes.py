@@ -127,6 +127,7 @@ def api_docs():
 
 
 # Health check routes
+@health_bp.route("/")
 @health_bp.route("/health")
 @track_metrics
 def health():
@@ -177,14 +178,15 @@ def health():
     return jsonify(health_status), status_code
 
 
-@health_bp.route("/health/live")
+@health_bp.route("/liveness")
+@health_bp.route("/live")
 @track_metrics
 def liveness():
     """Kubernetes liveness probe"""
     return jsonify({"status": "alive", "timestamp": datetime.utcnow().isoformat() + "Z"})
 
 
-@health_bp.route("/health/ready")
+@health_bp.route("/ready")
 @track_metrics
 def readiness():
     """Kubernetes readiness probe"""
@@ -237,6 +239,7 @@ def metrics():
 
 
 @api_bp.route("/db-test")
+@api_bp.route("/db-test")
 @track_metrics
 def db_test():
     """Test database connection and return server info"""
@@ -267,6 +270,39 @@ def db_test():
         return jsonify({"error": str(e)}), 500
 
 
+
+
+# Database test endpoint
+@main_bp.route("/db-test")
+@track_metrics
+def db_test():
+    """Test database connection and return server info"""
+    try:
+        from app.database import db_manager
+        import psycopg2
+        with db_manager.get_cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""
+                SELECT
+                    version() as postgres_version,
+                    current_timestamp as server_time,
+                    current_database() as database_name,
+                    current_user as connected_user,
+                    inet_server_addr() as server_ip,
+                    inet_server_port() as server_port
+            """)
+            result = cur.fetchone()
+            return jsonify({
+                "message": "Database connected successfully",
+                "postgres_version": result["postgres_version"],
+                "server_time": result["server_time"].isoformat() if result["server_time"] else None,
+                "database_name": result["database_name"],
+                "connected_user": result["connected_user"],
+                "server_ip": result["server_ip"],
+                "server_port": result["server_port"]
+            })
+    except Exception as e:
+        logger.error("database_test_failed", error=str(e))
+        return jsonify({"error": str(e)}), 500
 # Metrics endpoint for Prometheus
 @metrics_bp.route("/metrics/prometheus")
 @track_metrics
