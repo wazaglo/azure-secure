@@ -29,7 +29,7 @@ Base address space: **10.0.0.0/16** per environment.
 ### snet-data
 - Delegated to `Microsoft.DBforPostgreSQL/flexibleServers`
 - Service endpoints: Microsoft.Sql, Microsoft.Storage
-- Allows only VNet traffic — database is unreachable from the internet by construction
+- Allows only VNet traffic, database is unreachable from the internet by construction
 
 ### snet-private-endpoints
 - Hosts all private endpoints (Key Vault, ACR, PostgreSQL)

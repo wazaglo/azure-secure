@@ -39,11 +39,11 @@ The SecureCloud Platform is a production-grade Azure DevOps platform built with 
 
 ## Design Principles
 
-1. **Security by default** — No public endpoints on any PaaS service. Private endpoints everywhere.
-2. **Zero-trust identity** — Managed identities for runtime, OIDC federation for CI/CD. No long-lived secrets.
-3. **Infrastructure as Code** — Every resource is defined in Bicep. The portal is a read-only view.
-4. **Environment parity** — Dev, staging, and prod use the same templates with parameter differences only.
-5. **Observability built-in** — Application Insights + Log Analytics on every deployment.
+1. **Security by default** - No public endpoints on any PaaS service. Private endpoints everywhere.
+2. **Zero-trust identity** - Managed identities for runtime, OIDC federation for CI/CD. No long-lived secrets.
+3. **Infrastructure as Code** - Every resource is defined in Bicep. The portal is a read-only view.
+4. **Environment parity** - Dev, staging, and prod use the same templates with parameter differences only.
+5. **Observability built-in** - Application Insights + Log Analytics on every deployment.
 
 ## Component Responsibilities
 

@@ -74,13 +74,13 @@ No client secrets are stored in GitHub. Instead:
 - MFA enforced for all users via Conditional Access (Entra ID)
 - No shared or admin accounts
 - Least-privilege RBAC assignments
-- Federated credentials for GitHub (no passwords, no certificates)
+- Federated credentials for GitHub (no passwords. NOcertificates)
 - Managed identities for application (no connection strings with credentials)
 
 ### Secrets
 - All secrets stored in Azure Key Vault (RBAC-enabled, soft delete 90 days, purge protection in prod)
 - Application reads secrets at runtime via Managed Identity (in-memory cache)
-- GitHub stores **no** Azure credentials — only tenant/client/subscription IDs (non-secret identifiers)
+- GitHub stores **no** Azure credentials, only tenant/client/subscription IDs (non-secret identifiers)
 - Pipeline parameter files reference secrets from Key Vault (`"reference": { "keyVault": ... }`)
 - Secret rotation policy: 90 days
 
@@ -97,7 +97,7 @@ No client secrets are stored in GitHub. Instead:
 - Defender for Cloud plans: Key Vault, Databases, Containers
 
 ### Compliance (Azure Policy)
-- `Deny-public-endpoints-for-databases` — audits that PostgreSQL flexible servers do not enable public endpoints
+- `Deny-public-endpoints-for-databases` - audits that PostgreSQL flexible servers do not enable public endpoints
 - Assigned at subscription scope
 
 ## Threat Model

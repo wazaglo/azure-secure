@@ -42,10 +42,10 @@
      --resource-group rg-securecloud-prod-apps \
      --server-name pg-securecloud-prod
    ```
-3. Re-attach application — no app changes needed (FQDN unchanged, private DNS resolves to new server).
+3. Re-attach application. NOapp changes needed (FQDN unchanged, private DNS resolves to new server).
 4. Verify with `/db-test` endpoint.
 
-**Estimated RTO**: 5–15 minutes depending on failover vs restore.
+**Estimated RTO**: 5-15 minutes depending on failover vs restore.
 
 ### 2. Container App Replica/Zone Failure
 
@@ -96,12 +96,12 @@ gh workflow run cd-prod.yml -f image_tag=staging-abc1234-1712345678 -f confirm_p
      -f infrastructure/modules/networking.bicep.bbl \
      -p environment=prod networkResourceGroupName=rg-securecloud-prod-networking ...
    ```
-2. Deploy main.bicep with updated parameters (new region, new ACR name — ACR names are global).
+2. Deploy main.bicep with updated parameters (new region, new ACR name. ACR names are global).
 3. Restore PostgreSQL from geo-redundant backup into new server.
 4. Push ACR images cross-region (or restore from image cache).
 5. Update DNS/Front Door to point at new environment.
 
-**Estimated RTO**: 2–4 hours (manual, tested runbook).
+**Estimated RTO**: 2-4 hours (manual, tested runbook).
 
 ### 6. CI/CD Pipeline Loss
 
@@ -137,4 +137,4 @@ gh workflow run cd-prod.yml -f image_tag=staging-abc1234-1712345678 -f confirm_p
 
 - ACR cross-region replication not enabled (restore requires re-push or `az acr import`).
 - Dev/staging PostgreSQL has no geo-redundant backup (acceptable for non-prod data).
-- Region-level RTO of 2–4 h is manual; automate with multi-region Bicep module if RTO < 1 h becomes a requirement.
+- Region-level RTO of 2-4 h is manual; automate with multi-region Bicep module if RTO < 1 h becomes a requirement.

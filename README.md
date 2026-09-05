@@ -89,24 +89,24 @@ azure-secure/
 **Trigger:** `main` push or **Workflow Dispatch**
 
 **Jobs:**
-1. **Deploy Infrastructure** — Bicep deployment to `rg-securecloud-dev-apps` (references existing KV/ACR/PG from the networking resource group)
-2. **Build & Push Docker Image** — builds `securecloud-app` and pushes to `secureclouddevcentralus.azurecr.io/securecloud-app:latest`
-3. **Deploy to Container Apps** — updates the container app with new image + sets env vars (`AZURE_CLIENT_ID`, `APPLICATIONINSIGHTS_CONNECTION_STRING`, `KEY_VAULT_URI`)
-4. **Verify Deployment** — curls `https://<FQDN>/health` up to 10 attempts; exits 0 on first success
-5. **Smoke Tests** — tests `/health`, `/api`, `/db-test` against the deployed FQDN
+1. **Deploy Infrastructure** - Bicep deployment to `rg-securecloud-dev-apps` (references existing KV/ACR/PG from the networking resource group)
+2. **Build & Push Docker Image** - builds `securecloud-app` and pushes to `secureclouddevcentralus.azurecr.io/securecloud-app:latest`
+3. **Deploy to Container Apps** - updates the container app with new image + sets env vars (`AZURE_CLIENT_ID`, `APPLICATIONINSIGHTS_CONNECTION_STRING`, `KEY_VAULT_URI`)
+4. **Verify Deployment** - curls `https://<FQDN>/health` up to 10 attempts; exits 0 on first success
+5. **Smoke Tests** - tests `/health`, `/api`, `/db-test` against the deployed FQDN
 
-**No separate CI workflow** — the `cd.yml` job sequence replaces the previous separate `ci.yml` + `cd-*.yml` pattern.
+**No separate CI workflow** - the `cd.yml` job sequence replaces the previous separate `ci.yml` + `cd-*.yml` pattern.
 
 ---
 
 ## Security Model
 
-- **Zero secrets in repo** — GitHub OIDC federated credentials authenticate the pipeline to Azure
-- **No long-lived secrets** — all pipeline auth via federated identity tokens
-- **Least-privilege RBAC** — app identity gets `Key Vault Secrets User` + `AcrPull`; pipeline identity gets `Contributor` + `AcrPush` + `Key Vault Secrets Officer` (scoped via `rbac.bicep` module deployed at networking RG)
-- **Private-only PaaS** — Key Vault, ACR, and PostgreSQL have no public access; connectivity via VNet + private endpoints
-- **Defense in depth** — default-deny NSGs, delegated subnets, private link service policies, TLS everywhere
-- **Secret sources** — `db-host`, `db-name`, `db-username`, `db-password`, `api-key` fetched from Key Vault `kv-securecloud-dev-cus` at runtime via Managed Identity
+- **Zero secrets in repo**: GitHub OIDC federated credentials authenticate the pipeline to Azure
+- **No long-lived secrets**: all pipeline auth via federated identity tokens
+- **Least-privilege RBAC**: app identity gets `Key Vault Secrets User` + `AcrPull`; pipeline identity gets `Contributor` + `AcrPush` + `Key Vault Secrets Officer` (scoped via `rbac.bicep` module deployed at networking RG)
+- **Private-only PaaS**: Key Vault, ACR, and PostgreSQL have no public access; connectivity via VNet + private endpoints
+- **Defense in depth**: default-deny NSGs, delegated subnets, private link service policies, TLS everywhere
+- **Secret sources**: `db-host`, `db-name`, `db-username`, `db-password`, `api-key` fetched from Key Vault `kv-securecloud-dev-cus` at runtime via Managed Identity
 
 ---
 
