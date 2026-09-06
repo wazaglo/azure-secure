@@ -8,7 +8,7 @@ Container App, Managed Identities, RBAC) into the APPS resource group.
 The NETWORKING layer (VNet, subnets, private DNS) and the shared platform
 services (Key Vault, ACR, PostgreSQL) already live in a separate resource
 group (`rg-securecloud-dev-networking-centralus`) and are referenced here as
-EXISTING resources (cross-RG) — they are NOT re-created, which avoids
+EXISTING resources (cross-RG) - they are NOT re-created, which avoids
 globally-unique name conflicts.
 
 Deploy:

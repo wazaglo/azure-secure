@@ -103,4 +103,4 @@ No traffic ever leaves the VNet for PaaS access.
 |----------|-----|--------------|
 | Ingress NSG source (HTTP/HTTPS) | * (internet) | VirtualNetwork |
 | Service publicNetworkAccess | Enabled | Disabled |
-| VNet peering | — | Hub VNet (future) |
+| VNet peering | - | Hub VNet (future) |

@@ -64,16 +64,16 @@ azure-secure/
 │   ├── requirements.txt
 │   └── Dockerfile                         # Multi-stage, non-root, health checks
 ├── infrastructure/
-│   ├── main.bicep                         # Root template — references existing KV/ACR/PG from networking RG as existing resources
+│   ├── main.bicep                         # Root template - references existing KV/ACR/PG from networking RG as existing resources
 │   ├── modules/
 │   │   ├── acr.bicep                      # ACR Premium + private endpoint
 │   │   ├── containerapps.bicep            # ACA + managed identities + RBAC
 │   │   ├── keyvault.bicep                 # Key Vault + private endpoint
 │   │   └── rbac.bicep                     # Cross-RG role assignments (KV/ACR scoped)
 │   └── environments/
-│       └── dev/main.parameters.json       # Dev params — uses existing shared resource names
+│       └── dev/main.parameters.json       # Dev params - uses existing shared resource names
 ├── .github/workflows/
-│   └── cd.yml                             # Single CD workflow — triggers on main push + workflow_dispatch
+│   └── cd.yml                             # Single CD workflow - triggers on main push + workflow_dispatch
 │       # Jobs: deploy-infrastructure → build-image → deploy-app → verify
 ├── tests/
 │   └── unit/test_app.py                   # 20 unit tests passing
